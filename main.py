@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from shapely.geometry import Polygon
 from shapely.ops import triangulate, unary_union
 import os
+from rect_decomposition import RectangularDecomposer
 
 # 1. 設定中文字型與負號顯示
 plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei'] 
@@ -12,7 +13,7 @@ def main():
     dxf_filename = "python_plan_try.dxf"
     
     if not os.path.exists(dxf_filename):
-        print(f"錯誤: 找不到檔案 '{dxf_filename}'")
+        print(f"找不到檔案 '{dxf_filename}'")
         return
 
     try:
@@ -22,24 +23,29 @@ def main():
         print(f"讀取錯誤: {e}")
         return
     
-    # 自動檢查 DXF 單位
-    # $INSUNITS 代碼表: 4=mm, 5=cm, 6=m, 0=無單位
+# 2.檢查 DXF 單位
+# $INSUNITS 代碼表: 4=mm, 5=cm, 6=m, 0=無單位
     units = doc.header.get('$INSUNITS', 0) 
     
     area_divisor = 1.0 # 預設除數 (如果是公尺就不用除)
-    unit_msg = "其他/公尺"
+    unit_msg = "公尺"
 
     if units == 4:
         print("偵測到圖檔單位: Millimeters (mm)")
         print("-> 自動啟用換算: 除以 1,000,000")
         area_divisor = 1000000.0
-        unit_msg = "毫米 (轉為平方公尺)"
+        unit_msg = "毫米"
+    elif units == 5:
+        print("偵測到圖檔單位: Centermeters (cm)")
+        print("-> 自動啟用換算: 除以 10,000")
+        area_divisor = 1000000.0
+        unit_msg = "公分"
     else:
-        print(f"偵測到圖檔單位代碼: {units} (非mm)")
+        print("偵測到圖檔單位: meter (m)")
         print("-> 保持原始數值，不進行百萬分率換算")
         area_divisor = 1.0
 
-    # ==========================================
+# 3.使用msp偵測ployline
     polygons = []
     lines = msp.query('LWPOLYLINE') 
 
@@ -57,9 +63,7 @@ def main():
         print("沒有找到閉合的多邊形。")
         return
 
-    # ---------------------------------------------------------
-    # 2. 幾何運算與繪圖，先畫出顏色範圍再切割
-    # ---------------------------------------------------------
+# 4.畫顏色範圍再切割
     fig, ax = plt.subplots(figsize=(10, 10))
     total_area_m2 = 0 
 
@@ -97,9 +101,7 @@ def main():
             except:
                 pass
 
-    # ---------------------------------------------------------
-    # 3. 輸出
-    # ---------------------------------------------------------
+# 5.輸出
     ax.set_aspect('equal')
     ax.axis('off')
     
@@ -107,5 +109,13 @@ def main():
     print(f"計算完成！總面積: {total_area_m2:.2f} m2")
     plt.show()
 
+# 6.測試
+    print("--- 開始偵測凹點 ---")
+    decomposer = RectangularDecomposer(poly) # 把你的多邊形丟進去
+    reflex_points = decomposer.find_reflex_vertices()
+
+    print(f"總共發現 {len(reflex_points)} 個凹點")
+
 if __name__ == "__main__":
     main()
+
