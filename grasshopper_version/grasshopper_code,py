@@ -1,0 +1,197 @@
+import Rhino.Geometry as rg
+import Rhino.UnitSystem as rus
+import Rhino.RhinoMath as rm
+import scriptcontext as sc
+import System.Collections.Generic as scg
+import math
+
+# 準備輸出容器
+geo_list = scg.List[object]()
+tag_txt_list = scg.List[object]()
+tag_pt_list = scg.List[object]()
+dim_txt_list = scg.List[object]()
+dim_pt_list = scg.List[object]()
+formula_list = scg.List[object]()
+
+def get_scale_factor():
+    """計算從當前單位轉到公尺 (Meters) 的倍率"""
+    current_unit = sc.doc.ModelUnitSystem
+    scale = rm.UnitScale(current_unit, rus.Meters)
+    print "當前單位: " + str(current_unit) + ", 換算公尺倍率: " + str(scale)
+    return scale
+
+def decompose_and_calculate(curve):
+    scale = get_scale_factor()
+    
+    # 1. 幾何前處理
+    if curve is None: return
+    if not curve.IsPlanar(0.001): curve = rg.Curve.ProjectToPlane(curve, rg.Plane.WorldXY)
+    
+    # 封口處理
+    if not curve.IsClosed:
+        curve.MakeClosed(0.001)
+        if not curve.IsClosed:
+            line = rg.LineCurve(curve.PointAtEnd, curve.PointAtStart)
+            curve = rg.Curve.JoinCurves([curve, line])[0]
+
+    breps = rg.Brep.CreatePlanarBreps(curve, 0.1) 
+    if not breps: return
+    main_brep = breps[0]
+
+    # 2. 智慧抓取切割線 (X軸)
+    # 改良點：使用 DuplicateSegments 只抓取真正的「線段端點」
+    # 這樣圓弧(Arc)會被視為一段，不會被切碎
+    xs = set()
+    
+    # 取得線段分解
+    segments = curve.DuplicateSegments()
+    
+    if segments and segments.Count > 0:
+        for seg in segments:
+            # 加入線段的起點與終點 X
+            xs.add(round(seg.PointAtStart.X, 4))
+            xs.add(round(seg.PointAtEnd.X, 4))
+            
+            # 只有當線段是「直線」且不是垂直線時，才考慮加入中間的極值(雖罕見但保險)
+            # 但為了建築用途，通常只切角落就夠了，這裡保持簡單
+    else:
+        # 如果分解失敗(例如純圓形)，就抓 BoundingBox 的左右
+        bbox = curve.GetBoundingBox(True)
+        xs.add(round(bbox.Min.X, 4))
+        xs.add(round(bbox.Max.X, 4))
+
+    # 排序並去頭去尾 (只切中間)
+    sorted_xs = sorted(list(xs))
+    cut_xs = sorted_xs[1:-1]
+
+    # 建立切割牆
+    cutters = scg.List[rg.Brep]()
+    bbox = main_brep.GetBoundingBox(True)
+    min_y, max_y = bbox.Min.Y - 10000, bbox.Max.Y + 10000
+    
+    for x in cut_xs:
+        line = rg.LineCurve(rg.Point3d(x, min_y, 0), rg.Point3d(x, max_y, 0))
+        extrusion = rg.Surface.CreateExtrusion(line, rg.Vector3d.ZAxis)
+        cutters.Add(extrusion.ToBrep())
+
+    # 3. 執行切割
+    split_breps = []
+    if cutters.Count > 0:
+        try:
+            split_breps = main_brep.Split(cutters, 0.001)
+        except: pass
+    
+    if not split_breps or len(split_breps) == 0:
+        split_breps = [main_brep]
+
+    # 4. 資料整理
+    temp_list = list(split_breps)
+    temp_list.sort(key=lambda b: b.GetBoundingBox(True).Min.X)
+    
+    idx = 0
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    
+    for brep in temp_list:
+        if not isinstance(brep, rg.Brep): continue
+        brep.Faces.ShrinkFaces()
+        brep.Compact()
+        
+        amp = rg.AreaMassProperties.Compute(brep)
+        if not amp or amp.Area < 0.001: continue
+        
+        final_brep = brep.DuplicateBrep()
+        
+        # --- 計算數值 (轉公尺) ---
+        bbox = final_brep.GetBoundingBox(True)
+        
+        # 寬度
+        w_m = round((bbox.Max.X - bbox.Min.X) * scale, 2)
+        
+        # 找出左右高 (輔助判斷形狀用)
+        left_h_m = 0.0
+        right_h_m = 0.0
+        
+        edges = final_brep.DuplicateEdgeCurves(True) 
+        dims_to_add = []
+        
+        # 判斷是否含有曲線 (Curve)
+        has_curve_edge = False
+        
+        for edge in edges:
+            length_m = round(edge.GetLength() * scale, 2)
+            if length_m < 0.01: continue
+            
+            # 檢查是否為曲線 (非直線)
+            if not edge.IsLinear(0.01):
+                has_curve_edge = True
+            
+            # 抓取左右垂直邊的高度
+            start = edge.PointAtStart
+            end = edge.PointAtEnd
+            mid = edge.PointAt(edge.Domain.Mid)
+            
+            # 垂直判斷
+            if abs(start.X - end.X) < 0.001:
+                if abs(start.X - bbox.Min.X) < 0.01:
+                    left_h_m = max(left_h_m, length_m)
+                    dims_to_add.append((mid, str(length_m)))
+                elif abs(start.X - bbox.Max.X) < 0.01:
+                    right_h_m = max(right_h_m, length_m)
+                    dims_to_add.append((mid, str(length_m)))
+
+        # 標示寬度
+        width_pt = rg.Point3d((bbox.Min.X + bbox.Max.X)/2, bbox.Min.Y, 0)
+        dims_to_add.append((width_pt, "W:" + str(w_m)))
+
+        # --- 生成代號 ---
+        if idx < 26: label = alphabet[idx]
+        else: label = "Z"
+        idx += 1
+        
+        area_m2 = round(amp.Area * scale * scale, 2)
+        
+        # --- 算式邏輯 ---
+        # 1. 如果有曲線邊 (圓/橢圓/弧)，一律用平均高公式，並標註 (Curve)
+        if has_curve_edge:
+             avg_h = round(area_m2 / w_m, 2) if w_m > 0 else 0
+             formula = "{0}: W({1}) * AvgH({2}) = {3} m2 (Curve)".format(label, w_m, avg_h, area_m2)
+        
+        # 2. 矩形 (Rect)
+        elif abs(left_h_m - right_h_m) < 0.01:
+            formula = "{0}: {1} * {2} = {3} m2 (Rect)".format(label, w_m, left_h_m, area_m2)
+            
+        # 3. 三角形 (Tri)
+        elif left_h_m < 0.01 or right_h_m < 0.01:
+            h = max(left_h_m, right_h_m)
+            formula = "{0}: ({1} * {2}) / 2 = {3} m2 (Tri)".format(label, w_m, h, area_m2)
+            
+        # 4. 梯形 (Trap)
+        else:
+            formula = "{0}: ({1} + {2}) * {3} / 2 = {4} m2 (Trap)".format(label, left_h_m, right_h_m, w_m, area_m2)
+
+        # 輸出
+        geo_list.Add(final_brep)
+        tag_txt_list.Add(label)
+        tag_pt_list.Add(amp.Centroid)
+        formula_list.Add(formula)
+        
+        for pt, txt in dims_to_add:
+            dim_pt_list.Add(pt)
+            dim_txt_list.Add(txt)
+
+# 執行
+if 'crv' in globals() and crv is not None:
+    try:
+        decompose_and_calculate(crv)
+    except Exception as e:
+        print "Error: " + str(e)
+else:
+    print "等待輸入..."
+
+# 輸出
+geo = geo_list
+tag_txt = tag_txt_list
+tag_pt = tag_pt_list
+dim_txt = dim_txt_list
+dim_pt = dim_pt_list
+formulas = formula_list
