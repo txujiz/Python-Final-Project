@@ -24,8 +24,7 @@
 實作垂直剖分法，將任意多邊形切割為易於計算的幾何單元。
 實作智慧合併演算法，修復過度切割的碎塊。
 
-Rhino/Grasshopper 特別實作 (New!)
-[C] 混合幾何處理 (Curves & Arcs)：
+[C] 混合幾何處理 (Curves & Arcs)：Rhino/Grasshopper 實作
 
 突破傳統多段線切割限制，採用特徵點抓取 (Feature Point Detection)。
 實現「矩形+圓弧」或「橢圓」的混合計算，避免將圓弧切碎，並自動套用等效矩形公式 (W x AvgH)。
