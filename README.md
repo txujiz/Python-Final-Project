@@ -53,11 +53,11 @@ Rhino 8 (SR5 以上版本佳)
 
 Grasshopper (內建於 Rhino)
 
-無需額外安裝 pip 套件，使用 Rhino 內建 Python 3 引擎。
+無需額外安裝 pip 套件，使用 Rhino 內建 Python 2.7 引擎。
 
 ## 4. 專案結構 (File Structure)
-Plaintext
 
+```
 Python-Final-Project/
 ├── dxf_implementation/        # [分支 A] 獨立 DXF 解析
 │   ├── data/
@@ -70,6 +70,7 @@ Python-Final-Project/
 │   └── gh_script_source.py    # (備份) GH 內部的 Python 原始碼
 │
 └── README.md                  # 專案說明文件
+```
 
 ## 5. 使用規範 (Usage Guidelines)
 ### CAD/DXF 前置處理
