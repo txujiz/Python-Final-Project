@@ -83,7 +83,7 @@ Python-Final-Project/
 ### Rhino/Grasshopper 操作
 開啟 Rhino 8 與 Grasshopper。
 
-載入 Area_Calculator_v2.gh。
+載入 grasshopper_try_gh.gh。
 
 在 Rhino 中選取要計算的封閉曲線 (Curve)。
 
